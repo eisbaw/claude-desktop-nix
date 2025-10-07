@@ -32,14 +32,23 @@ if [ ! -f "/etc/debian_version" ]; then
     exit 1
 fi
 
+# Track whether we are already running with root privileges so we can avoid
+# relying on sudo in containerized CI environments where the default user is
+# root. When the script is invoked via sudo, prefer the invoking user's home
+# directory so we can still detect tools like NVM correctly.
+IS_ROOT=false
 if [ "$EUID" -eq 0 ]; then
-   echo "❌ This script should not be run using sudo or as the root user."
-   echo "   It will prompt for sudo password when needed for specific actions."
-   echo "   Please run as a normal user."
-   exit 1
+    IS_ROOT=true
+    if [ -n "${SUDO_USER:-}" ]; then
+        ORIGINAL_USER="$SUDO_USER"
+    else
+        ORIGINAL_USER=$(whoami)
+    fi
+    echo "⚠️ Running with root privileges; privileged commands will not use sudo."
+else
+    ORIGINAL_USER=$(whoami)
 fi
 
-ORIGINAL_USER=$(whoami)
 ORIGINAL_HOME=$(getent passwd "$ORIGINAL_USER" | cut -d: -f6)
 if [ -z "$ORIGINAL_HOME" ]; then
     echo "❌ Could not determine home directory for user $ORIGINAL_USER."
@@ -85,12 +94,16 @@ while [[ $# -gt 0 ]]; do
     key="$1"
     case $key in
         -b|--build)
-        if [[ -z "$2" || "$2" == -* ]]; then              echo "❌ Error: Argument for $1 is missing" >&2; exit 1
+        if [[ -z "$2" || "$2" == -* ]]; then
+            echo "❌ Error: Argument for $1 is missing" >&2
+            exit 1
         fi
         BUILD_FORMAT="$2"
         shift 2 ;; # Shift past flag and value
         -c|--clean)
-        if [[ -z "$2" || "$2" == -* ]]; then              echo "❌ Error: Argument for $1 is missing" >&2; exit 1
+        if [[ -z "$2" || "$2" == -* ]]; then
+            echo "❌ Error: Argument for $1 is missing" >&2
+            exit 1
         fi
         CLEANUP_ACTION="$2"
         shift 2 ;; # Shift past flag and value
@@ -179,22 +192,40 @@ done
 
 if [ -n "$DEPS_TO_INSTALL" ]; then
     echo "System dependencies needed: $DEPS_TO_INSTALL"
-    echo "Attempting to install using sudo..."
+    if [ "$IS_ROOT" = true ]; then
+        echo "Attempting to install using root privileges..."
+        if ! apt update; then
+            echo "❌ Failed to run 'apt update'."
+            exit 1
+        fi
+        # Here on purpose no "" to expand the 'list', thus
+        # shellcheck disable=SC2086
+        if ! apt install -y $DEPS_TO_INSTALL; then
+            echo "❌ Failed to install dependencies using 'apt install'."
+            exit 1
+        fi
+    else
+        echo "Attempting to install using sudo..."
+        if ! command -v sudo &> /dev/null; then
+            echo "❌ sudo is required to install missing dependencies. Please install them manually or ensure sudo is available."
+            exit 1
+        fi
         if ! sudo -v; then
-        echo "❌ Failed to validate sudo credentials. Please ensure you can run sudo."
-        exit 1
-    fi
+            echo "❌ Failed to validate sudo credentials. Please ensure you can run sudo."
+            exit 1
+        fi
         if ! sudo apt update; then
-        echo "❌ Failed to run 'sudo apt update'."
-        exit 1
+            echo "❌ Failed to run 'sudo apt update'."
+            exit 1
+        fi
+        # Here on purpose no "" to expand the 'list', thus
+        # shellcheck disable=SC2086
+        if ! sudo apt install -y $DEPS_TO_INSTALL; then
+            echo "❌ Failed to install dependencies using 'sudo apt install'."
+            exit 1
+        fi
     fi
-    # Here on purpose no "" to expand the 'list', thus
-    # shellcheck disable=SC2086
-    if ! sudo apt install -y $DEPS_TO_INSTALL; then
-         echo "❌ Failed to install dependencies using 'sudo apt install'."
-         exit 1
-    fi
-    echo "✓ System dependencies installed successfully via sudo."
+    echo "✓ System dependencies installed successfully."
 fi
 
 rm -rf "$WORK_DIR"
@@ -317,7 +348,8 @@ if [ -d "$ELECTRON_DIST_PATH" ]; then
 else
     echo "❌ Failed to find Electron distribution directory at '$ELECTRON_DIST_PATH' after installation attempt."
     echo "   Cannot proceed without the Electron distribution files."
-    cd "$PROJECT_ROOT"     exit 1
+    cd "$PROJECT_ROOT"
+    exit 1
 fi
 
 if [ -f "$ASAR_BIN_PATH" ]; then
@@ -350,7 +382,8 @@ echo "✓ Download complete: $CLAUDE_EXE_FILENAME"
 echo "📦 Extracting resources from $CLAUDE_EXE_FILENAME into separate directory..."
 CLAUDE_EXTRACT_DIR="$WORK_DIR/claude-extract"
 mkdir -p "$CLAUDE_EXTRACT_DIR"
-if ! 7z x -y "$CLAUDE_EXE_PATH" -o"$CLAUDE_EXTRACT_DIR"; then     echo "❌ Failed to extract installer"
+if ! 7z x -y "$CLAUDE_EXE_PATH" -o"$CLAUDE_EXTRACT_DIR"; then
+    echo "❌ Failed to extract installer"
     cd "$PROJECT_ROOT" && exit 1
 fi
 
@@ -360,7 +393,8 @@ if [ -z "$NUPKG_PATH_RELATIVE" ]; then
     echo "❌ Could not find AnthropicClaude nupkg file in $CLAUDE_EXTRACT_DIR"
     cd "$PROJECT_ROOT" && exit 1
 fi
-NUPKG_PATH="$CLAUDE_EXTRACT_DIR/$NUPKG_PATH_RELATIVE" echo "Found nupkg: $NUPKG_PATH_RELATIVE (in $CLAUDE_EXTRACT_DIR)"
+NUPKG_PATH="$CLAUDE_EXTRACT_DIR/$NUPKG_PATH_RELATIVE"
+echo "Found nupkg: $NUPKG_PATH_RELATIVE (full path: $NUPKG_PATH)"
 
 VERSION=$(echo "$NUPKG_PATH_RELATIVE" | LC_ALL=C grep -oP 'AnthropicClaude-\K[0-9]+\.[0-9]+\.[0-9]+(?=-full|-arm64-full)')
 if [ -z "$VERSION" ]; then
@@ -369,7 +403,8 @@ if [ -z "$VERSION" ]; then
 fi
 echo "✓ Detected Claude version: $VERSION"
 
-if ! 7z x -y "$NUPKG_PATH_RELATIVE"; then     echo "❌ Failed to extract nupkg"
+if ! 7z x -y "$NUPKG_PATH_RELATIVE"; then
+    echo "❌ Failed to extract nupkg"
     cd "$PROJECT_ROOT" && exit 1
 fi
 echo "✓ Resources extracted from nupkg"
@@ -380,11 +415,13 @@ if [ ! -f "$EXE_RELATIVE_PATH" ]; then
     cd "$PROJECT_ROOT" && exit 1
 fi
 echo "🎨 Processing icons from $EXE_RELATIVE_PATH..."
-if ! wrestool -x -t 14 "$EXE_RELATIVE_PATH" -o claude.ico; then     echo "❌ Failed to extract icons from exe"
+if ! wrestool -x -t 14 "$EXE_RELATIVE_PATH" -o claude.ico; then
+    echo "❌ Failed to extract icons from exe"
     cd "$PROJECT_ROOT" && exit 1
 fi
 
-if ! icotool -x claude.ico; then     echo "❌ Failed to convert icons"
+if ! icotool -x claude.ico; then
+    echo "❌ Failed to convert icons"
     cd "$PROJECT_ROOT" && exit 1
 fi
 cp claude_*.png "$WORK_DIR/"
@@ -566,8 +603,9 @@ fi
 
 
 echo -e "\033[1;36m--- Cleanup ---\033[0m"
-if [ "$PERFORM_CLEANUP" = true ]; then     echo "🧹 Cleaning up intermediate build files in $WORK_DIR..."
-        if rm -rf "$WORK_DIR"; then
+if [ "$PERFORM_CLEANUP" = true ]; then
+    echo "🧹 Cleaning up intermediate build files in $WORK_DIR..."
+    if rm -rf "$WORK_DIR"; then
         echo "✓ Cleanup complete ($WORK_DIR removed)."
     else
         echo "⚠️ Cleanup command (rm -rf $WORK_DIR) failed."
