@@ -10,12 +10,14 @@ cat /etc/os-release && uname -m && dpkg --print-architecture
 
 # Set variables based on detected architecture
 if [ "$HOST_ARCH" = "amd64" ]; then
-    CLAUDE_DOWNLOAD_URL="https://storage.googleapis.com/osprey-downloads-c02f6a0d-347c-492b-a752-3e0651722e97/nest-win-x64/Claude-Setup-x64.exe"
+    # Updated URL from claude.ai/download page (2025)
+    CLAUDE_DOWNLOAD_URL="https://claude.ai/api/desktop/win32/x64/exe/latest/redirect"
     ARCHITECTURE="amd64"
     CLAUDE_EXE_FILENAME="Claude-Setup-x64.exe"
     echo "Configured for amd64 build."
 elif [ "$HOST_ARCH" = "arm64" ]; then
-    CLAUDE_DOWNLOAD_URL="https://storage.googleapis.com/osprey-downloads-c02f6a0d-347c-492b-a752-3e0651722e97/nest-win-arm64/Claude-Setup-arm64.exe"
+    # Updated URL from claude.ai/download page (2025)
+    CLAUDE_DOWNLOAD_URL="https://claude.ai/api/desktop/win32/arm64/exe/latest/redirect"
     ARCHITECTURE="arm64"
     CLAUDE_EXE_FILENAME="Claude-Setup-arm64.exe"
     echo "Configured for arm64 build."
@@ -369,7 +371,9 @@ echo "Using asar executable: $ASAR_EXEC"
 echo -e "\033[1;36m--- Download the latest Claude executable ---\033[0m"
 echo "📥 Downloading Claude Desktop installer for $ARCHITECTURE..."
 CLAUDE_EXE_PATH="$WORK_DIR/$CLAUDE_EXE_FILENAME"
-if ! wget -O "$CLAUDE_EXE_PATH" "$CLAUDE_DOWNLOAD_URL"; then
+# Use proper user agent for claude.ai API endpoint
+if ! wget --user-agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
+         -O "$CLAUDE_EXE_PATH" "$CLAUDE_DOWNLOAD_URL"; then
     echo "❌ Failed to download Claude Desktop installer from $CLAUDE_DOWNLOAD_URL"
     exit 1
 fi
