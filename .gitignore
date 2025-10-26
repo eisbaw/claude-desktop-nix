@@ -1,6 +1,7 @@
 # Build output
 build/
 build_*/
+build-output.log
 
 # Dev folder
 .dev/
