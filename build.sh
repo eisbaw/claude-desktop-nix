@@ -324,11 +324,13 @@ if [ "$INSTALL_NEEDED" = true ]; then
 
         if [ -n "$NIX_ELECTRON" ] && [ -n "$NIX_ASAR" ]; then
             echo "✓ Found Nix electron and asar, using them instead..."
-            mkdir -p "$WORK_DIR/node_modules/electron"
+            mkdir -p "$WORK_DIR/node_modules/electron/dist"
             mkdir -p "$WORK_DIR/node_modules/.bin"
-            ln -sf "$NIX_ELECTRON" "$WORK_DIR/node_modules/electron/dist"
+            # Copy electron files from Nix store (can't symlink - will need to write to it later)
+            echo "Copying Nix electron files (this may take a moment)..."
+            cp -r "$NIX_ELECTRON"/* "$WORK_DIR/node_modules/electron/dist/"
             ln -sf "$NIX_ASAR" "$WORK_DIR/node_modules/.bin/asar"
-            echo "✓ Created symlinks to Nix electron and asar"
+            echo "✓ Copied Nix electron and linked asar"
         else
             echo "❌ Failed to install Electron and/or Asar locally and Nix fallback not available."
             cd "$PROJECT_ROOT"
@@ -369,15 +371,24 @@ echo "Using asar executable: $ASAR_EXEC"
 
 
 echo -e "\033[1;36m--- Download the latest Claude executable ---\033[0m"
-echo "📥 Downloading Claude Desktop installer for $ARCHITECTURE..."
 CLAUDE_EXE_PATH="$WORK_DIR/$CLAUDE_EXE_FILENAME"
-# Use proper user agent for claude.ai API endpoint
-if ! wget --user-agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
-         -O "$CLAUDE_EXE_PATH" "$CLAUDE_DOWNLOAD_URL"; then
-    echo "❌ Failed to download Claude Desktop installer from $CLAUDE_DOWNLOAD_URL"
-    exit 1
+
+# Check for local installer first
+LOCAL_INSTALLER="$PROJECT_ROOT/installers/$CLAUDE_EXE_FILENAME"
+if [ -f "$LOCAL_INSTALLER" ]; then
+    echo "✓ Using local installer: $LOCAL_INSTALLER"
+    cp "$LOCAL_INSTALLER" "$CLAUDE_EXE_PATH"
+    echo "✓ Copied local installer to build directory"
+else
+    echo "📥 Downloading Claude Desktop installer for $ARCHITECTURE..."
+    # Use proper user agent for claude.ai API endpoint
+    if ! wget --user-agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
+             -O "$CLAUDE_EXE_PATH" "$CLAUDE_DOWNLOAD_URL"; then
+        echo "❌ Failed to download Claude Desktop installer from $CLAUDE_DOWNLOAD_URL"
+        exit 1
+    fi
+    echo "✓ Download complete: $CLAUDE_EXE_FILENAME"
 fi
-echo "✓ Download complete: $CLAUDE_EXE_FILENAME"
 
 echo "📦 Extracting resources from $CLAUDE_EXE_FILENAME into separate directory..."
 CLAUDE_EXTRACT_DIR="$WORK_DIR/claude-extract"
@@ -508,15 +519,28 @@ else
 fi
 
 # Ensure Electron locale files are available
-ELECTRON_RESOURCES_SRC="$CHOSEN_ELECTRON_MODULE_PATH/dist/resources"
+# Check for standard npm structure first, then Nix structure
+if [ -d "$CHOSEN_ELECTRON_MODULE_PATH/dist/resources" ]; then
+    ELECTRON_RESOURCES_SRC="$CHOSEN_ELECTRON_MODULE_PATH/dist/resources"
+elif [ -d "$CHOSEN_ELECTRON_MODULE_PATH/dist/libexec/electron/resources" ]; then
+    # Nix electron-unwrapped structure
+    ELECTRON_RESOURCES_SRC="$CHOSEN_ELECTRON_MODULE_PATH/dist/libexec/electron/resources"
+else
+    ELECTRON_RESOURCES_SRC=""
+fi
+
 ELECTRON_RESOURCES_DEST="$APP_STAGING_DIR/node_modules/$ELECTRON_DIR_NAME/dist/resources"
-if [ -d "$ELECTRON_RESOURCES_SRC" ]; then
+if [ -n "$ELECTRON_RESOURCES_SRC" ] && [ -d "$ELECTRON_RESOURCES_SRC" ]; then
     echo "Copying Electron locale resources..."
     mkdir -p "$ELECTRON_RESOURCES_DEST"
     cp -a "$ELECTRON_RESOURCES_SRC"/* "$ELECTRON_RESOURCES_DEST/"
     echo "✓ Electron locale resources copied"
 else
-    echo "⚠️  Warning: Electron resources directory not found at $ELECTRON_RESOURCES_SRC"
+    echo "⚠️  Warning: Electron resources directory not found"
+    echo "   Tried: $CHOSEN_ELECTRON_MODULE_PATH/dist/resources"
+    echo "   Tried: $CHOSEN_ELECTRON_MODULE_PATH/dist/libexec/electron/resources"
+    # Create resources directory anyway for locale files
+    mkdir -p "$ELECTRON_RESOURCES_DEST"
 fi
 
 # Copy Claude locale JSON files to Electron resources directory where they're expected
@@ -524,7 +548,7 @@ CLAUDE_LOCALE_SRC="$CLAUDE_EXTRACT_DIR/lib/net45/resources"
 echo "Copying Claude locale JSON files to Electron resources directory..."
 if [ -d "$CLAUDE_LOCALE_SRC" ]; then
     # Copy Claude's locale JSON files to the Electron resources directory
-    cp "$CLAUDE_LOCALE_SRC/"*-*.json "$ELECTRON_RESOURCES_DEST/"
+    cp "$CLAUDE_LOCALE_SRC/"*-*.json "$ELECTRON_RESOURCES_DEST/" 2>/dev/null || echo "⚠️  Warning: Failed to copy some locale files"
     echo "✓ Claude locale JSON files copied to Electron resources directory"
 else
     echo "⚠️  Warning: Claude locale source directory not found at $CLAUDE_LOCALE_SRC"

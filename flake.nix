@@ -39,11 +39,23 @@
 
             nativeBuildInputs = buildDeps;
 
+            # Make sure installers directory is available
+            preBuild = ''
+              mkdir -p installers
+              # Copy installers if they exist in source
+              if [ -d "$src/installers" ]; then
+                cp -r $src/installers/* installers/ || true
+              fi
+            '';
+
             buildPhase = ''
               runHook preBuild
 
               # Create a temporary home directory
               export HOME=$TMPDIR
+
+              # Use Nix electron/asar to avoid npm network calls
+              export USE_NIX=1
 
               # Run the build script
               bash build.sh --build deb --clean no
