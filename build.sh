@@ -42,7 +42,12 @@ if [ "$EUID" -eq 0 ]; then
 fi
 
 ORIGINAL_USER=$(whoami)
-ORIGINAL_HOME=$(getent passwd "$ORIGINAL_USER" | cut -d: -f6)
+# Try getent first, fall back to $HOME if getent not available (Nix builds)
+if command -v getent >/dev/null 2>&1; then
+    ORIGINAL_HOME=$(getent passwd "$ORIGINAL_USER" | cut -d: -f6)
+else
+    ORIGINAL_HOME="$HOME"
+fi
 if [ -z "$ORIGINAL_HOME" ]; then
     echo "❌ Could not determine home directory for user $ORIGINAL_USER."
     exit 1
@@ -516,6 +521,16 @@ if [ -f "$STAGED_ELECTRON_BIN" ]; then
     chmod +x "$STAGED_ELECTRON_BIN"
 else
     echo "Warning: Staged Electron binary not found at expected path: $STAGED_ELECTRON_BIN"
+    # Check for Nix electron structure (dist/libexec/electron/electron)
+    NIX_ELECTRON_BIN="$APP_STAGING_DIR/node_modules/$ELECTRON_DIR_NAME/dist/libexec/electron/electron"
+    if [ -f "$NIX_ELECTRON_BIN" ]; then
+        echo "Found Nix electron binary, creating symlink for launcher compatibility..."
+        ln -sf "libexec/electron/electron" "$STAGED_ELECTRON_BIN"
+        echo "✓ Created symlink: $STAGED_ELECTRON_BIN -> libexec/electron/electron"
+    else
+        echo "❌ Error: Electron binary not found in standard or Nix locations"
+        exit 1
+    fi
 fi
 
 # Ensure Electron locale files are available
@@ -543,12 +558,32 @@ else
     mkdir -p "$ELECTRON_RESOURCES_DEST"
 fi
 
+# For Nix electron structure, also copy locale files to libexec/electron/resources
+# This is where the running electron binary looks for them
+NIX_ELECTRON_RESOURCES_DEST="$APP_STAGING_DIR/node_modules/$ELECTRON_DIR_NAME/dist/libexec/electron/resources"
+if [ -d "$APP_STAGING_DIR/node_modules/$ELECTRON_DIR_NAME/dist/libexec/electron" ]; then
+    echo "Nix electron structure detected, copying locale files to libexec/electron/resources..."
+    mkdir -p "$NIX_ELECTRON_RESOURCES_DEST"
+    if [ -n "$ELECTRON_RESOURCES_SRC" ] && [ -d "$ELECTRON_RESOURCES_SRC" ]; then
+        cp -a "$ELECTRON_RESOURCES_SRC"/* "$NIX_ELECTRON_RESOURCES_DEST/" 2>/dev/null || true
+    fi
+    # Also copy from dist/resources if it exists
+    if [ -d "$ELECTRON_RESOURCES_DEST" ]; then
+        cp -a "$ELECTRON_RESOURCES_DEST"/* "$NIX_ELECTRON_RESOURCES_DEST/" 2>/dev/null || true
+    fi
+    echo "✓ Locale files copied to Nix electron libexec directory"
+fi
+
 # Copy Claude locale JSON files to Electron resources directory where they're expected
 CLAUDE_LOCALE_SRC="$CLAUDE_EXTRACT_DIR/lib/net45/resources"
 echo "Copying Claude locale JSON files to Electron resources directory..."
 if [ -d "$CLAUDE_LOCALE_SRC" ]; then
     # Copy Claude's locale JSON files to the Electron resources directory
     cp "$CLAUDE_LOCALE_SRC/"*-*.json "$ELECTRON_RESOURCES_DEST/" 2>/dev/null || echo "⚠️  Warning: Failed to copy some locale files"
+    # For Nix structure, also copy to libexec location
+    if [ -d "$NIX_ELECTRON_RESOURCES_DEST" ]; then
+        cp "$CLAUDE_LOCALE_SRC/"*-*.json "$NIX_ELECTRON_RESOURCES_DEST/" 2>/dev/null || true
+    fi
     echo "✓ Claude locale JSON files copied to Electron resources directory"
 else
     echo "⚠️  Warning: Claude locale source directory not found at $CLAUDE_LOCALE_SRC"

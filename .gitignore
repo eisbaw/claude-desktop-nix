@@ -29,5 +29,12 @@ CLAUDE.md
 # Local installers
 installers/
 
-# Screenshot logs
+# Screenshot logs and debug files
 screenshot-log.txt
+*-screenshot*.png
+debug-run.sh
+test-claude-final.sh
+claude-output.log
+claude-final-output.log
+nix-rebuild.log
+build-direct.log
