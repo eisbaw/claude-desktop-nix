@@ -300,10 +300,38 @@ fi
 
 if [ "$INSTALL_NEEDED" = true ]; then
     echo "Installing Electron and Asar locally into $WORK_DIR..."
-        if ! npm install --no-save electron @electron/asar; then
-        echo "❌ Failed to install Electron and/or Asar locally."
-        cd "$PROJECT_ROOT"
-        exit 1
+    # Check if USE_NIX environment variable is set to skip npm
+    if [ "$USE_NIX" = "1" ]; then
+        echo "USE_NIX=1 set, skipping npm and using Nix electron/asar..."
+        NPM_FAILED=true
+    else
+        # Try npm install first, but fall back to Nix if available
+        NPM_FAILED=false
+        if ! npm install --no-save electron @electron/asar 2>&1 | tee /tmp/npm-install.log; then
+            NPM_FAILED=true
+        fi
+    fi
+
+    if [ "$NPM_FAILED" = "true" ]; then
+        if [ "$USE_NIX" != "1" ]; then
+            echo "⚠️  npm install failed, checking for Nix electron/asar..."
+        fi
+        # Check if we have Nix electron and asar
+        NIX_ELECTRON=$(ls -d /nix/store/*electron-unwrapped-* 2>/dev/null | grep -v ".drv" | head -1)
+        NIX_ASAR=$(find /nix/store -path "*/bin/asar" -type f 2>/dev/null | head -1)
+
+        if [ -n "$NIX_ELECTRON" ] && [ -n "$NIX_ASAR" ]; then
+            echo "✓ Found Nix electron and asar, using them instead..."
+            mkdir -p "$WORK_DIR/node_modules/electron"
+            mkdir -p "$WORK_DIR/node_modules/.bin"
+            ln -sf "$NIX_ELECTRON" "$WORK_DIR/node_modules/electron/dist"
+            ln -sf "$NIX_ASAR" "$WORK_DIR/node_modules/.bin/asar"
+            echo "✓ Created symlinks to Nix electron and asar"
+        else
+            echo "❌ Failed to install Electron and/or Asar locally and Nix fallback not available."
+            cd "$PROJECT_ROOT"
+            exit 1
+        fi
     fi
     echo "✓ Electron and Asar installation command finished."
 else

@@ -2,6 +2,8 @@
 build/
 build_*/
 build-output.log
+*-build.log
+*-build*.log
 
 # Dev folder
 .dev/
