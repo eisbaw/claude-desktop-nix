@@ -23,4 +23,10 @@ Thumbs.db
 *.deb
 
 .claude/
-CLAUDE.mdinstallers/
+CLAUDE.md
+
+# Local installers
+installers/
+
+# Screenshot logs
+screenshot-log.txt
